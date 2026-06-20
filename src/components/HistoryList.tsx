@@ -14,7 +14,7 @@ export const HistoryList: React.FC<Props> = ({ entries }) => {
       <Box flexDirection="column" alignItems="center" marginY={2}>
         <Text color="#555555">No downloads yet.</Text>
         <Text color="#444444" dimColor>
-          Run  xvd {'<url>'}  to download your first video.
+          Run  xvd {'<url>'}  to download videos and photos.
         </Text>
       </Box>
     );
@@ -70,7 +70,7 @@ export const HistoryList: React.FC<Props> = ({ entries }) => {
 
       {/* Footer */}
       <Box gap={3} marginTop={1} paddingX={1}>
-        <Text color="#555555">{entries.length} video{entries.length !== 1 ? 's' : ''}</Text>
+        <Text color="#555555">{entries.length} file{entries.length !== 1 ? 's' : ''}</Text>
         <Text color="#555555">Total {formatBytes(totalSize)}</Text>
         <Text color="#444444" dimColor>~/.config/xvd/history.json</Text>
       </Box>

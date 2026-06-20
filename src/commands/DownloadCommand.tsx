@@ -4,8 +4,8 @@ import { Spinner } from '../components/Spinner.js';
 import { TweetCard } from '../components/TweetCard.js';
 import { ProgressBar } from '../components/ProgressBar.js';
 import { QualitySelector } from '../components/QualitySelector.js';
-import { fetchTweetData, selectVariant, type TweetData, type VideoVariant } from '../api/twitter.js';
-import { downloadVideo, defaultOutputDir, buildFilename, type DownloadProgress, type PostProcessOptions, type SubtitleOptions } from '../media/download.js';
+import { fetchTweetData, selectVariant, type TweetData, type VideoVariant, type PhotoInfo } from '../api/twitter.js';
+import { downloadVideo, downloadPhoto, defaultOutputDir, buildFilename, buildPhotoFilename, type DownloadProgress, type PostProcessOptions, type SubtitleOptions } from '../media/download.js';
 import { resolveWhisperConfig } from '../media/transcribe.js';
 import { addEntry, getFileSize } from '../store/history.js';
 import { extractTweetId, resolveShortUrl } from '../utils/url.js';
@@ -18,7 +18,7 @@ type Phase =
   | 'resolving'   // resolving short URL
   | 'fetching'    // fetching tweet metadata
   | 'selecting'   // interactive quality picker
-  | 'downloading' // active download
+  | 'downloading' // active download (video or photo)
   | 'done'        // success
   | 'error';      // fatal error
 
@@ -30,6 +30,8 @@ interface State {
   filePath?: string;
   error?: string;
   warning?: string;
+  mediaType?: 'video' | 'photo';
+  photoProgress?: { current: number; total: number };
 }
 
 type Action =
@@ -38,6 +40,8 @@ type Action =
   | { type: 'FETCHED'; tweet: TweetData; variant: VideoVariant; askQuality: boolean }
   | { type: 'SELECT'; index: number }
   | { type: 'DOWNLOADING' }
+  | { type: 'PHOTO_READY'; total: number }
+  | { type: 'PHOTO_PROGRESS'; current: number; total: number; progress: DownloadProgress }
   | { type: 'PROGRESS'; progress: DownloadProgress }
   | { type: 'DONE'; filePath: string }
   | { type: 'WARN'; message: string }
@@ -53,6 +57,7 @@ function reducer(state: State, action: Action): State {
         phase: action.askQuality ? 'selecting' : 'downloading',
         tweet: action.tweet,
         selectedVariant: action.variant,
+        mediaType: 'video',
       };
     case 'SELECT':
       return {
@@ -61,6 +66,10 @@ function reducer(state: State, action: Action): State {
         selectedVariant: state.tweet!.videoVariants[action.index],
       };
     case 'DOWNLOADING': return { ...state, phase: 'downloading' };
+    case 'PHOTO_READY':
+      return { ...state, phase: 'downloading', mediaType: 'photo', photoProgress: { current: 0, total: action.total } };
+    case 'PHOTO_PROGRESS':
+      return { ...state, phase: 'downloading', progress: action.progress, photoProgress: { current: action.current, total: action.total } };
     case 'PROGRESS':    return { ...state, phase: 'downloading', progress: action.progress };
     case 'DONE':        return { ...state, phase: 'done', filePath: action.filePath };
     case 'WARN':        return { ...state, warning: action.message };
@@ -137,6 +146,49 @@ export const DownloadCommand: React.FC<Props> = ({ rawUrl, outputDir, quality, p
     [outputDir, postProcess, sendNotify, subtitleLang, libreUrl],
   );
 
+  // ── Photo download handler ───────────────────────────────────
+  const runPhotoDownload = useCallback(
+    async (tweet: TweetData) => {
+      const outDir = outputDir ?? defaultOutputDir();
+      const total = tweet.photos.length;
+
+      dispatch({ type: 'PHOTO_READY', total });
+
+      const filePaths: string[] = [];
+      for (let i = 0; i < total; i++) {
+        const photo = tweet.photos[i];
+        const filename = buildPhotoFilename(tweet.id, i, photo.url);
+
+        const fp = await downloadPhoto(
+          photo.url,
+          outDir,
+          filename,
+          (p) => dispatch({ type: 'PHOTO_PROGRESS', current: i + 1, total, progress: p }),
+        );
+        filePaths.push(fp);
+
+        addEntry({
+          tweetId: tweet.id,
+          tweetUrl: `https://x.com/${tweet.authorUsername}/status/${tweet.id}`,
+          authorName: tweet.authorName,
+          authorUsername: tweet.authorUsername,
+          tweetText: tweet.text,
+          filePath: fp,
+          filename: path.basename(fp),
+          fileSize: getFileSize(fp),
+          quality: 'photo',
+          width: photo.width,
+          height: photo.height,
+          downloadedAt: new Date().toISOString(),
+        });
+      }
+
+      if (sendNotify) notifyDownloadDone(tweet.authorUsername, `${total} photo${total > 1 ? 's' : ''}`);
+      dispatch({ type: 'DONE', filePath: filePaths.join(', ') });
+    },
+    [outputDir, sendNotify],
+  );
+
   // ── Main effect ──────────────────────────────────────────────
   useEffect(() => {
     (async () => {
@@ -156,27 +208,29 @@ export const DownloadCommand: React.FC<Props> = ({ rawUrl, outputDir, quality, p
         dispatch({ type: 'FETCHING' });
         const tweet = await fetchTweetData(tweetId);
 
-        if (!tweet.videoVariants.length) {
-          dispatch({ type: 'ERROR', message: 'This tweet has no downloadable video.' });
-          return;
-        }
+        // 4. Route to video or photo flow
+        if (tweet.videoVariants.length > 0) {
+          // ── Video flow ──
+          // Warn if subtitle was requested but no tracks and no Whisper source available
+          if (subtitleLang && !tweet.subtitleTracks.length && !whisperUrl && !resolveWhisperConfig()) {
+            dispatch({ type: 'WARN', message: `⚠  No subtitle tracks found for this video — downloading without subtitles.` });
+          }
 
-        // 4. Warn if subtitle was requested but no tracks and no Whisper source available
-        if (subtitleLang && !tweet.subtitleTracks.length && !whisperUrl && !resolveWhisperConfig()) {
-          dispatch({ type: 'WARN', message: `⚠  No subtitle tracks found for this video — downloading without subtitles.` });
-        }
+          const askQuality = quality.toLowerCase() === 'ask';
+          const variant = askQuality
+            ? tweet.videoVariants[0]
+            : selectVariant(tweet.videoVariants, quality);
 
-        // 5. Pick variant
-        const askQuality = quality.toLowerCase() === 'ask';
-        const variant = askQuality
-          ? tweet.videoVariants[0]
-          : selectVariant(tweet.videoVariants, quality);
+          dispatch({ type: 'FETCHED', tweet, variant, askQuality });
 
-        dispatch({ type: 'FETCHED', tweet, variant, askQuality });
-
-        // 5. Auto-start download unless asking quality
-        if (!askQuality) {
-          await runDownload(tweet, variant);
+          if (!askQuality) {
+            await runDownload(tweet, variant);
+          }
+        } else if (tweet.photos.length > 0) {
+          // ── Photo flow ──
+          await runPhotoDownload(tweet);
+        } else {
+          dispatch({ type: 'ERROR', message: 'This tweet has no downloadable media.' });
         }
       } catch (err) {
         dispatch({ type: 'ERROR', message: (err as Error).message });
@@ -225,6 +279,37 @@ export const DownloadCommand: React.FC<Props> = ({ rawUrl, outputDir, quality, p
       {state.tweet && state.selectedVariant && (
         <TweetCard tweet={state.tweet} selectedVariant={state.selectedVariant} />
       )}
+      {state.tweet && state.mediaType === 'photo' && (
+        <Box
+          borderStyle="round"
+          borderColor="cyan"
+          flexDirection="column"
+          paddingX={2}
+          paddingY={1}
+          width={56}
+          marginBottom={1}
+        >
+          <Box gap={2} marginBottom={1}>
+            <Text color="yellow">◉ </Text>
+            <Text bold color="white">
+              {state.photoProgress?.total ?? state.tweet.photos.length} photo{state.tweet.photos.length > 1 ? 's' : ''}
+            </Text>
+          </Box>
+          <Box>
+            <Text color="#555555">  @</Text>
+            <Text bold color="white">{state.tweet.authorUsername}</Text>
+            {state.tweet.authorName !== state.tweet.authorUsername && (
+              <Text color="#666666">{'  '}{state.tweet.authorName}</Text>
+            )}
+          </Box>
+          {state.tweet.text && (
+            <Box>
+              <Text color="#555555">  </Text>
+              <Text color="#888888" italic>"{(state.tweet.text.replace(/\n/g, ' ')).slice(0, 64)}"</Text>
+            </Box>
+          )}
+        </Box>
+      )}
 
       {/* Quality picker */}
       {state.phase === 'selecting' && state.tweet && (
@@ -235,7 +320,20 @@ export const DownloadCommand: React.FC<Props> = ({ rawUrl, outputDir, quality, p
       )}
 
       {/* Download / post-processing progress */}
-      {state.phase === 'downloading' && state.progress && (() => {
+      {state.phase === 'downloading' && state.mediaType === 'photo' && state.photoProgress && (() => {
+        const { current, total } = state.photoProgress;
+        return (
+          <Box flexDirection="column">
+            <Spinner label={`Downloading photo ${current}/${total}…`} />
+            {state.progress && (
+              <Box marginTop={1}>
+                <ProgressBar progress={state.progress} />
+              </Box>
+            )}
+          </Box>
+        );
+      })()}
+      {state.phase === 'downloading' && state.mediaType !== 'photo' && state.progress && (() => {
         const ph = state.progress.phase;
         const label =
           ph === 'hls'       ? 'Downloading HLS segments…' :
@@ -252,7 +350,7 @@ export const DownloadCommand: React.FC<Props> = ({ rawUrl, outputDir, quality, p
           </Box>
         );
       })()}
-      {state.phase === 'downloading' && !state.progress && (
+      {state.phase === 'downloading' && !state.progress && state.mediaType !== 'photo' && (
         <Spinner label="Starting download…" />
       )}
 
@@ -287,7 +385,7 @@ export const DownloadCommand: React.FC<Props> = ({ rawUrl, outputDir, quality, p
           <Text color="red" bold>✗  Error</Text>
           <Text color="#cc4444">{state.error}</Text>
           <Text color="#555555" dimColor>
-            Make sure the tweet URL is public and contains a video.
+            Make sure the tweet URL is public and contains media.
           </Text>
         </Box>
       )}

@@ -2,7 +2,7 @@ import React, { useEffect, useReducer, useRef } from 'react';
 import { Box, Text, useApp } from 'ink';
 import pLimit from 'p-limit';
 import { fetchTweetData, selectVariant } from '../api/twitter.js';
-import { downloadVideo, defaultOutputDir, buildFilename, type DownloadProgress } from '../media/download.js';
+import { downloadVideo, downloadPhoto, defaultOutputDir, buildFilename, buildPhotoFilename, type DownloadProgress } from '../media/download.js';
 import { addEntry, getFileSize } from '../store/history.js';
 import { extractTweetId } from '../utils/url.js';
 import { notifyBatchDone } from '../platform/notify.js';
@@ -134,39 +134,73 @@ export const BatchCommand: React.FC<Props> = ({
         try {
           dispatchRef.current({ type: 'FETCHING', tweetId });
           const tweet = await fetchTweetData(tweetId);
-          if (!tweet.videoVariants.length) {
-            dispatchRef.current({ type: 'SKIP', tweetId, reason: 'no video' });
-            return;
+
+          if (tweet.videoVariants.length > 0) {
+            // ── Video ──
+            const variant = selectVariant(tweet.videoVariants, quality);
+            dispatchRef.current({ type: 'DOWNLOADING', tweetId, username: tweet.authorUsername, quality: variant.quality });
+
+            const filename = buildFilename(tweetId, variant.quality);
+            const filePath = await downloadVideo(
+              variant.url,
+              outDir,
+              filename,
+              (p) => dispatchRef.current({ type: 'PROGRESS', tweetId, progress: p }),
+            );
+
+            const fileSize = getFileSize(filePath);
+            dispatchRef.current({ type: 'DONE', tweetId, fileSize });
+
+            addEntry({
+              tweetId,
+              tweetUrl: url,
+              authorName: tweet.authorName,
+              authorUsername: tweet.authorUsername,
+              tweetText: tweet.text,
+              filePath,
+              filename: path.basename(filePath),
+              fileSize,
+              quality: variant.quality,
+              width: variant.width,
+              height: variant.height,
+              duration: tweet.duration,
+              downloadedAt: new Date().toISOString(),
+            });
+          } else if (tweet.photos.length > 0) {
+            // ── Photo(s) ──
+            dispatchRef.current({ type: 'DOWNLOADING', tweetId, username: tweet.authorUsername, quality: 'photo' });
+
+            for (let i = 0; i < tweet.photos.length; i++) {
+              const photo = tweet.photos[i];
+              const filename = buildPhotoFilename(tweetId, i, photo.url);
+              const filePath = await downloadPhoto(
+                photo.url,
+                outDir,
+                filename,
+                (p) => dispatchRef.current({ type: 'PROGRESS', tweetId, progress: p }),
+              );
+              const fileSize = getFileSize(filePath);
+
+              addEntry({
+                tweetId,
+                tweetUrl: url,
+                authorName: tweet.authorName,
+                authorUsername: tweet.authorUsername,
+                tweetText: tweet.text,
+                filePath,
+                filename: path.basename(filePath),
+                fileSize,
+                quality: 'photo',
+                width: photo.width,
+                height: photo.height,
+                downloadedAt: new Date().toISOString(),
+              });
+            }
+
+            dispatchRef.current({ type: 'DONE', tweetId, fileSize: 0 });
+          } else {
+            dispatchRef.current({ type: 'SKIP', tweetId, reason: 'no media' });
           }
-          const variant = selectVariant(tweet.videoVariants, quality);
-          dispatchRef.current({ type: 'DOWNLOADING', tweetId, username: tweet.authorUsername, quality: variant.quality });
-
-          const filename = buildFilename(tweetId, variant.quality);
-          const filePath = await downloadVideo(
-            variant.url,
-            outDir,
-            filename,
-            (p) => dispatchRef.current({ type: 'PROGRESS', tweetId, progress: p }),
-          );
-
-          const fileSize = getFileSize(filePath);
-          dispatchRef.current({ type: 'DONE', tweetId, fileSize });
-
-          addEntry({
-            tweetId,
-            tweetUrl: url,
-            authorName: tweet.authorName,
-            authorUsername: tweet.authorUsername,
-            tweetText: tweet.text,
-            filePath,
-            filename: path.basename(filePath),
-            fileSize,
-            quality: variant.quality,
-            width: variant.width,
-            height: variant.height,
-            duration: tweet.duration,
-            downloadedAt: new Date().toISOString(),
-          });
         } catch (err) {
           dispatchRef.current({ type: 'ERROR', tweetId, message: (err as Error).message });
         }

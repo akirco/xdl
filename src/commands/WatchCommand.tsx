@@ -3,7 +3,7 @@ import { Box, Text, useApp, useInput, useStdin } from 'ink';
 import { Spinner } from '../components/Spinner.js';
 import { ProgressBar } from '../components/ProgressBar.js';
 import { fetchTweetData, selectVariant } from '../api/twitter.js';
-import { downloadVideo, defaultOutputDir, buildFilename, type DownloadProgress } from '../media/download.js';
+import { downloadVideo, downloadPhoto, defaultOutputDir, buildFilename, buildPhotoFilename, type DownloadProgress } from '../media/download.js';
 import { addEntry, getFileSize } from '../store/history.js';
 import { extractTweetId } from '../utils/url.js';
 import { startClipboardWatcher } from '../platform/clipboard.js';
@@ -129,38 +129,81 @@ export const WatchCommand: React.FC<Props> = ({ outputDir, quality, sendNotify }
 
     try {
       const tweet = await fetchTweetData(tweetId);
-      const variant = selectVariant(tweet.videoVariants, quality);
-      dispatch({ type: 'FETCHED', tweetId, username: tweet.authorUsername, text: tweet.text, quality: variant.quality });
 
-      const outDir = outputDir ?? defaultOutputDir();
-      const filename = buildFilename(tweetId, variant.quality);
-      const filePath = await downloadVideo(
-        variant.url,
-        outDir,
-        filename,
-        (p) => dispatch({ type: 'PROGRESS', tweetId, progress: p }),
-      );
+      if (tweet.videoVariants.length > 0) {
+        // ── Video ──
+        const variant = selectVariant(tweet.videoVariants, quality);
+        dispatch({ type: 'FETCHED', tweetId, username: tweet.authorUsername, text: tweet.text, quality: variant.quality });
 
-      const fileSize = getFileSize(filePath);
-      dispatch({ type: 'DONE', tweetId, filePath, fileSize });
+        const outDir = outputDir ?? defaultOutputDir();
+        const filename = buildFilename(tweetId, variant.quality);
+        const filePath = await downloadVideo(
+          variant.url,
+          outDir,
+          filename,
+          (p) => dispatch({ type: 'PROGRESS', tweetId, progress: p }),
+        );
 
-      addEntry({
-        tweetId,
-        tweetUrl: url,
-        authorName: tweet.authorName,
-        authorUsername: tweet.authorUsername,
-        tweetText: tweet.text,
-        filePath,
-        filename: path.basename(filePath),
-        fileSize,
-        quality: variant.quality,
-        width: variant.width,
-        height: variant.height,
-        duration: tweet.duration,
-        downloadedAt: new Date().toISOString(),
-      });
+        const fileSize = getFileSize(filePath);
+        dispatch({ type: 'DONE', tweetId, filePath, fileSize });
 
-      if (sendNotify) notifyDownloadDone(tweet.authorUsername, path.basename(filePath));
+        addEntry({
+          tweetId,
+          tweetUrl: url,
+          authorName: tweet.authorName,
+          authorUsername: tweet.authorUsername,
+          tweetText: tweet.text,
+          filePath,
+          filename: path.basename(filePath),
+          fileSize,
+          quality: variant.quality,
+          width: variant.width,
+          height: variant.height,
+          duration: tweet.duration,
+          downloadedAt: new Date().toISOString(),
+        });
+
+        if (sendNotify) notifyDownloadDone(tweet.authorUsername, path.basename(filePath));
+      } else if (tweet.photos.length > 0) {
+        // ── Photo(s) ──
+        dispatch({ type: 'FETCHED', tweetId, username: tweet.authorUsername, text: tweet.text, quality: 'photo' });
+
+        const outDir = outputDir ?? defaultOutputDir();
+        let lastPath = '';
+        for (let i = 0; i < tweet.photos.length; i++) {
+          const photo = tweet.photos[i];
+          const filename = buildPhotoFilename(tweetId, i, photo.url);
+          const filePath = await downloadPhoto(
+            photo.url,
+            outDir,
+            filename,
+            (p) => dispatch({ type: 'PROGRESS', tweetId, progress: p }),
+          );
+          lastPath = filePath;
+          const fileSize = getFileSize(filePath);
+
+          addEntry({
+            tweetId,
+            tweetUrl: url,
+            authorName: tweet.authorName,
+            authorUsername: tweet.authorUsername,
+            tweetText: tweet.text,
+            filePath,
+            filename: path.basename(filePath),
+            fileSize,
+            quality: 'photo',
+            width: photo.width,
+            height: photo.height,
+            downloadedAt: new Date().toISOString(),
+          });
+        }
+
+        dispatch({ type: 'DONE', tweetId, filePath: lastPath, fileSize: 0 });
+
+        if (sendNotify) notifyDownloadDone(tweet.authorUsername, `${tweet.photos.length} photo${tweet.photos.length > 1 ? 's' : ''}`);
+      } else {
+        dispatch({ type: 'ERROR', tweetId, message: 'No downloadable media' });
+      }
     } catch (err) {
       dispatch({ type: 'ERROR', tweetId, message: (err as Error).message });
     } finally {
@@ -260,7 +303,7 @@ export const WatchCommand: React.FC<Props> = ({ outputDir, quality, sendNotify }
         <Box marginTop={1} gap={3}>
           {done.length > 0 && (
             <Text color="#555555">
-              {done.length} video{done.length !== 1 ? 's' : ''} · {formatBytes(totalSize)}
+              {done.length} file{done.length !== 1 ? 's' : ''} · {formatBytes(totalSize)}
             </Text>
           )}
           {errors.length > 0 && (

@@ -243,3 +243,81 @@ export function defaultOutputDir(): string {
 export function buildFilename(tweetId: string, quality: string): string {
   return `xvd_${tweetId}_${quality.replace(/[^a-zA-Z0-9]/g, '')}.mp4`;
 }
+
+export function buildPhotoFilename(tweetId: string, index: number, photoUrl: string): string {
+  const extMatch = photoUrl.match(/\.(jpe?g|png|webp|gif)(?:\?|$)/i);
+  const ext = extMatch ? extMatch[1] : 'jpg';
+  return `xvd_${tweetId}_${index + 1}.${ext}`;
+}
+
+export async function downloadPhoto(
+  url: string,
+  outputDir: string,
+  filename: string,
+  onProgress?: ProgressCallback,
+): Promise<string> {
+  await mkdir(outputDir, { recursive: true });
+  const filePath = path.join(outputDir, filename);
+
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+        '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      Referer: 'https://twitter.com/',
+    },
+  });
+
+  if (!response.ok) throw new Error(`Photo download failed: HTTP ${response.status}`);
+  if (!response.body) throw new Error('Empty response body');
+
+  const total = parseInt(response.headers.get('content-length') ?? '0', 10);
+  let downloaded = 0;
+  let windowStart = Date.now();
+  let windowBytes = 0;
+  let speed = 0;
+
+  const writer = createWriteStream(filePath);
+  const reader = response.body.getReader();
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      await new Promise<void>((resolve, reject) => {
+        writer.write(value, (err) => (err ? reject(err) : resolve()));
+      });
+
+      downloaded  += value.length;
+      windowBytes += value.length;
+
+      const elapsed = (Date.now() - windowStart) / 1000;
+      if (elapsed >= 0.8) {
+        speed       = windowBytes / elapsed;
+        windowStart = Date.now();
+        windowBytes = 0;
+      }
+
+      onProgress?.({
+        downloaded,
+        total,
+        speed,
+        percentage: total > 0 ? Math.min(99, Math.round((downloaded / total) * 100)) : 0,
+        phase: 'mp4',
+      });
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      writer.end((err: unknown) => (err ? reject(err) : resolve()));
+    });
+
+    onProgress?.({ downloaded, total: downloaded, speed, percentage: 100, phase: 'mp4' });
+  } catch (err) {
+    writer.destroy();
+    if (existsSync(filePath)) unlinkSync(filePath);
+    throw err;
+  }
+
+  return filePath;
+}
