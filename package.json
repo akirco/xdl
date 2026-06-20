@@ -9,6 +9,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsx src/cli.tsx",
+    "build:bin": "bun build src/cli.tsx --compile --outfile build/xvd --target bun",
     "prepublishOnly": "npm run build"
   },
   "files": [
@@ -31,6 +32,7 @@
     "@types/node": "^20.11.0",
     "@types/react": "^18.2.0",
     "dotenv": "^17.3.1",
+    "react-devtools-core": "^7.0.1",
     "tsup": "^8.0.2",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3"

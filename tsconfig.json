@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ES2022",
+    "module": "esnext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "strict": true,
@@ -10,8 +10,15 @@
     "resolveJsonModule": true,
     "outDir": "dist",
     "rootDir": "src",
+    "types": [
+      "node"
+    ],
     "declaration": false,
-    "lib": ["ES2022"]
+    "lib": [
+      "ES2022"
+    ]
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }
