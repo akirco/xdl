@@ -9,6 +9,8 @@
 
 **Download X / Twitter videos from your terminal beautifully.**
 
+> this is a fork of [xvd-cli](https://github.com/ercan-er/xvd-cli)
+
 ## ✨ What it does
 
 One command. Any X (Twitter) video. No API key. No browser extension. No nonsense.
