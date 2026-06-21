@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            suffix: ""
+          - os: macos-13
+            target: darwin-x64
+            suffix: ""
+          - os: macos-latest
+            target: darwin-arm64
+            suffix: ""
+          - os: windows-latest
+            target: windows-x64
+            suffix: .exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run build:bin
+
+      - name: Rename binary
+        shell: bash
+        run: |
+          mv build/xdl${{ matrix.suffix }} build/xdl-${{ matrix.target }}${{ matrix.suffix }}
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: build/xdl-*

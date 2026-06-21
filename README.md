@@ -34,7 +34,7 @@ xdl https://x.com/NASA/status/1902118174591521056
 ## 💻 Install
 
 ```bash
-npm install -g xdl-cli
+bin install https://github.com/akirco/xdl
 ```
 
 That's it. No Python, no yt-dlp, no API key.
