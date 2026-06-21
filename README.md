@@ -46,6 +46,20 @@ _(ffmpeg optional, required only for GIF conversion, watermarks, subtitle burnin
 
 ## 📗 Usage
 
+### Set token
+
+> `F12` -> `Storage` -> `Cookies`
+
+```
+auth_token:"xxx"
+ct0:"xxx"
+```
+
+```
+export XDL_AUTH_TOKEN=""
+export XDL_CT0=""
+```
+
 ### Download a single video
 
 ```bash
