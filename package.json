@@ -1,15 +1,15 @@
 {
-  "name": "xvd-cli",
+  "name": "xdl",
   "version": "1.1.1",
-  "description": "Download videos from X (Twitter) with a stunning TUI",
+  "description": "Download media from X (Twitter) with a stunning TUI",
   "type": "module",
   "bin": {
-    "xvd": "dist/cli.js"
+    "xdl": "dist/cli.js"
   },
   "scripts": {
     "build": "tsup",
     "dev": "tsx src/cli.tsx",
-    "build:bin": "bun build src/cli.tsx --compile --outfile build/xvd --target bun",
+    "build:bin": "bun build src/cli.tsx --compile --outfile build/xdl --target bun",
     "prepublishOnly": "npm run build"
   },
   "files": [
@@ -19,23 +19,23 @@
     "LICENSE"
   ],
   "dependencies": {
-    "chalk": "^5.3.0",
-    "clipboardy": "^4.0.0",
-    "gradient-string": "^2.0.2",
-    "ink": "^5.0.1",
-    "meow": "^13.2.0",
-    "p-limit": "^6.1.0",
-    "react": "^18.2.0"
+    "chalk": "^5.6.2",
+    "clipboardy": "^5.3.1",
+    "gradient-string": "^3.0.0",
+    "ink": "^7.1.0",
+    "meow": "^14.1.0",
+    "p-limit": "^7.3.0",
+    "react": "^19.2.7"
   },
   "devDependencies": {
     "@types/gradient-string": "^1.1.6",
-    "@types/node": "^20.11.0",
-    "@types/react": "^18.2.0",
-    "dotenv": "^17.3.1",
+    "@types/node": "^26.0.0",
+    "@types/react": "^19.2.17",
+    "dotenv": "^17.4.2",
     "react-devtools-core": "^7.0.1",
-    "tsup": "^8.0.2",
-    "tsx": "^4.7.0",
-    "typescript": "^5.3.3"
+    "tsup": "^8.5.1",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -55,10 +55,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ercan-er/xvd-cli.git"
+    "url": "git+https://github.com/akirco/xdl.git"
   },
-  "homepage": "https://github.com/ercan-er/xvd-cli#readme",
+  "homepage": "https://github.com/akirco/xdl#readme",
   "bugs": {
-    "url": "https://github.com/ercan-er/xvd-cli/issues"
+    "url": "https://github.com/akirco/xdl/issues"
   }
 }
