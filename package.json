@@ -11,8 +11,16 @@
 		"dev": "tsx src/cli.tsx",
 		"build:bin": "bun build src/cli.tsx --compile --outfile build/xdl --target bun",
 		"prepublishOnly": "npm run build",
-		"lint": "biome check"
+		"lint": "biome check --write"
 	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
 	"files": [
 		"dist/",
 		"package.json",

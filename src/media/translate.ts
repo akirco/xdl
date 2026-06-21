@@ -50,12 +50,12 @@ export function renderSrt(segments: SrtSegment[]): string {
 // ── Translation engines ───────────────────────────────────────
 
 // Build-time injected default URLs (set via .env before npm run build)
-declare const __XVD_LIBRE_URL__: string;
-declare const __XVD_LIBRE_KEY__: string;
+declare const __XDL_LIBRE_URL__: string;
+declare const __XDL_LIBRE_KEY__: string;
 const BUILTIN_LIBRE_URL: string =
-	typeof __XVD_LIBRE_URL__ !== "undefined" ? __XVD_LIBRE_URL__ : "";
+	typeof __XDL_LIBRE_URL__ !== "undefined" ? __XDL_LIBRE_URL__ : "";
 const BUILTIN_LIBRE_KEY: string =
-	typeof __XVD_LIBRE_KEY__ !== "undefined" ? __XVD_LIBRE_KEY__ : "";
+	typeof __XDL_LIBRE_KEY__ !== "undefined" ? __XDL_LIBRE_KEY__ : "";
 
 // LibreTranslate: self-hosted, no rate limit issues, needs server running
 async function translateViaLibre(

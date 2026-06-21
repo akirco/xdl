@@ -239,7 +239,7 @@ export async function downloadVideo(
 			srtContent = await fetchSubtitleContent(track.url);
 			trackLang = track.language;
 		} else {
-			// no track — resolve Whisper endpoint: explicit flag → XVD_WHISPER_URL env → OPENAI_API_KEY env
+			// no track — resolve Whisper endpoint: explicit flag → XDL_WHISPER_URL env → OPENAI_API_KEY env
 			const whisperCfg = whisperUrl
 				? { url: whisperUrl, apiKey: whisperKey }
 				: resolveWhisperConfig();

@@ -24,7 +24,7 @@ export interface HistoryEntry {
 	downloadedAt: string; // ISO string
 }
 
-const CONFIG_DIR = path.join(os.homedir(), ".config", "xvd");
+const CONFIG_DIR = path.join(os.homedir(), ".config", "xdl");
 const HISTORY_FILE = path.join(CONFIG_DIR, "history.json");
 const MAX_ENTRIES = 200;
 

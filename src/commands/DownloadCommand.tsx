@@ -157,7 +157,7 @@ export const DownloadCommand: React.FC<Props> = ({
 			const filename = buildFilename(tweet.id, variant.quality);
 
 			// Only build subtitle opts when we have something to work with:
-			// existing tracks OR a Whisper server (explicit flag, XVD_WHISPER_URL env, or OPENAI_API_KEY env).
+			// existing tracks OR a Whisper server (explicit flag, XDL_WHISPER_URL env, or OPENAI_API_KEY env).
 			// If nothing is available the warning was already shown and we skip.
 			const hasWhisper = !!whisperUrl || !!resolveWhisperConfig();
 			const canSubtitle =

@@ -33,10 +33,10 @@ function extractAudio(videoPath: string): Promise<string> {
 }
 
 // Build-time injected Whisper credentials
-declare const __XVD_WHISPER_URL__: string;
+declare const __XDL_WHISPER_URL__: string;
 declare const __XVD_WHISPER_KEY__: string;
 const BUILTIN_WHISPER_URL: string =
-	typeof __XVD_WHISPER_URL__ !== "undefined" ? __XVD_WHISPER_URL__ : "";
+	typeof __XDL_WHISPER_URL__ !== "undefined" ? __XDL_WHISPER_URL__ : "";
 const BUILTIN_WHISPER_KEY: string =
 	typeof __XVD_WHISPER_KEY__ !== "undefined" ? __XVD_WHISPER_KEY__ : "";
 
@@ -116,7 +116,7 @@ export async function transcribeToSrt(
 /**
  * Resolve the effective Whisper endpoint + API key using this priority:
  *   1. Explicit --whisper-url flag
- *   2. XVD_WHISPER_URL env variable (user's private server, hidden from docs)
+ *   2. XDL_WHISPER_URL env variable (user's private server, hidden from docs)
  *   3. OPENAI_API_KEY env variable  →  OpenAI Whisper API
  *
  * Returns undefined when nothing is configured (caller decides what to do).
@@ -132,7 +132,7 @@ export function resolveWhisperConfig():
 		};
 
 	// 2. Runtime env variable (user's own setup)
-	const envUrl = process.env.XVD_WHISPER_URL;
+	const envUrl = process.env.XDL_WHISPER_URL;
 	if (envUrl) return { url: envUrl };
 
 	// 3. OpenAI API key fallback

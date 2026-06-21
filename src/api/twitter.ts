@@ -135,7 +135,7 @@ async function fetchViaSyndication(
 		duration: videoMedia?.video_info?.duration_millis as number | undefined,
 		thumbnailUrl: videoMedia?.media_url_https as string | undefined,
 		subtitleTracks: videoMedia
-			? extractSubtitleTracks(videoMedia.video_info)
+			? extractSubtitleTracks(videoMedia.video_info ?? {})
 			: [],
 	};
 }
