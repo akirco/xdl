@@ -1,323 +1,408 @@
-import { createWriteStream, existsSync, unlinkSync } from 'fs';
-import { mkdir, writeFile, unlink } from 'fs/promises';
-import path from 'path';
-import os from 'os';
-import { isHlsUrl, downloadHls, type HlsProgress } from './hls.js';
-import { ffmpegAvailable, convertToGif, addWatermark, burnSubtitles, type WatermarkPosition } from './ffmpeg.js';
-import { type SubtitleTrack, fetchSubtitleContent } from '../api/subtitles.js';
-import { translateSrt } from './translate.js';
-import { transcribeToSrt, resolveWhisperConfig } from './transcribe.js';
+import { createWriteStream, existsSync, unlinkSync } from "node:fs";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fetchSubtitleContent, type SubtitleTrack } from "../api/subtitles.js";
+import {
+	addWatermark,
+	burnSubtitles,
+	convertToGif,
+	ffmpegAvailable,
+	type WatermarkPosition,
+} from "./ffmpeg.js";
+import { downloadHls, type HlsProgress, isHlsUrl } from "./hls.js";
+import { resolveWhisperConfig, transcribeToSrt } from "./transcribe.js";
+import { translateSrt } from "./translate.js";
 
 export interface DownloadProgress {
-  downloaded: number;
-  total: number;
-  speed: number;       // bytes/s, rolling average
-  percentage: number;
-  phase?: 'mp4' | 'hls' | 'gif' | 'watermark' | 'subtitle';
+	downloaded: number;
+	total: number;
+	speed: number; // bytes/s, rolling average
+	percentage: number;
+	phase?: "mp4" | "hls" | "gif" | "watermark" | "subtitle";
 }
 
 export type ProgressCallback = (p: DownloadProgress) => void;
 
 export interface SubtitleOptions {
-  targetLang: string;
-  sourceLang?: string;          // auto-detected if omitted
-  libreUrl?: string;            // LibreTranslate server, falls back to MyMemory if absent/down
-  whisperUrl?: string;          // Whisper-compatible API for transcription when no tracks exist
-  whisperKey?: string;          // Bearer token for Whisper API (required for OpenAI)
-  tracks: SubtitleTrack[];      // available tracks from the tweet
+	targetLang: string;
+	sourceLang?: string; // auto-detected if omitted
+	libreUrl?: string; // LibreTranslate server, falls back to MyMemory if absent/down
+	whisperUrl?: string; // Whisper-compatible API for transcription when no tracks exist
+	whisperKey?: string; // Bearer token for Whisper API (required for OpenAI)
+	tracks: SubtitleTrack[]; // available tracks from the tweet
 }
 
 export interface PostProcessOptions {
-  gif?: boolean;
-  gifFps?: number;
-  gifWidth?: number;
-  watermark?: string;           // path to PNG
-  watermarkPos?: WatermarkPosition;
-  watermarkSize?: number;       // px width to scale to (default: 150)
-  watermarkOpacity?: number;    // 0.0–1.0 (default: 0.7)
-  subtitle?: SubtitleOptions;
-  notify?: boolean;
+	gif?: boolean;
+	gifFps?: number;
+	gifWidth?: number;
+	watermark?: string; // path to PNG
+	watermarkPos?: WatermarkPosition;
+	watermarkSize?: number; // px width to scale to (default: 150)
+	watermarkOpacity?: number; // 0.0–1.0 (default: 0.7)
+	subtitle?: SubtitleOptions;
+	notify?: boolean;
 }
 
 async function downloadMp4(
-  url: string,
-  filePath: string,
-  onProgress?: ProgressCallback,
+	url: string,
+	filePath: string,
+	onProgress?: ProgressCallback,
 ): Promise<void> {
-  const response = await fetch(url, {
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      Referer: 'https://twitter.com/',
-    },
-  });
+	const response = await fetch(url, {
+		headers: {
+			"User-Agent":
+				"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+				"(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+			Referer: "https://twitter.com/",
+		},
+	});
 
-  if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`);
-  if (!response.body) throw new Error('Empty response body');
+	if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`);
+	if (!response.body) throw new Error("Empty response body");
 
-  const total = parseInt(response.headers.get('content-length') ?? '0', 10);
-  let downloaded = 0;
-  let windowStart = Date.now();
-  let windowBytes = 0;
-  let speed = 0;
+	const total = parseInt(response.headers.get("content-length") ?? "0", 10);
+	let downloaded = 0;
+	let windowStart = Date.now();
+	let windowBytes = 0;
+	let speed = 0;
 
-  const writer = createWriteStream(filePath);
-  const reader = response.body.getReader();
+	const writer = createWriteStream(filePath);
+	const reader = response.body.getReader();
 
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
 
-      await new Promise<void>((resolve, reject) => {
-        writer.write(value, (err) => (err ? reject(err) : resolve()));
-      });
+			await new Promise<void>((resolve, reject) => {
+				writer.write(value, (err) => (err ? reject(err) : resolve()));
+			});
 
-      downloaded  += value.length;
-      windowBytes += value.length;
+			downloaded += value.length;
+			windowBytes += value.length;
 
-      const elapsed = (Date.now() - windowStart) / 1000;
-      if (elapsed >= 0.8) {
-        speed       = windowBytes / elapsed;
-        windowStart = Date.now();
-        windowBytes = 0;
-      }
+			const elapsed = (Date.now() - windowStart) / 1000;
+			if (elapsed >= 0.8) {
+				speed = windowBytes / elapsed;
+				windowStart = Date.now();
+				windowBytes = 0;
+			}
 
-      onProgress?.({
-        downloaded,
-        total,
-        speed,
-        percentage: total > 0 ? Math.min(99, Math.round((downloaded / total) * 100)) : 0,
-        phase: 'mp4',
-      });
-    }
+			onProgress?.({
+				downloaded,
+				total,
+				speed,
+				percentage:
+					total > 0 ? Math.min(99, Math.round((downloaded / total) * 100)) : 0,
+				phase: "mp4",
+			});
+		}
 
-    await new Promise<void>((resolve, reject) => {
-      writer.end((err: unknown) => (err ? reject(err) : resolve()));
-    });
+		await new Promise<void>((resolve, reject) => {
+			writer.end((err: unknown) => (err ? reject(err) : resolve()));
+		});
 
-    onProgress?.({ downloaded, total: downloaded, speed, percentage: 100, phase: 'mp4' });
-  } catch (err) {
-    writer.destroy();
-    if (existsSync(filePath)) unlinkSync(filePath);
-    throw err;
-  }
+		onProgress?.({
+			downloaded,
+			total: downloaded,
+			speed,
+			percentage: 100,
+			phase: "mp4",
+		});
+	} catch (err) {
+		writer.destroy();
+		if (existsSync(filePath)) unlinkSync(filePath);
+		throw err;
+	}
 }
 
 export async function downloadVideo(
-  url: string,
-  outputDir: string,
-  filename: string,
-  onProgress?: ProgressCallback,
-  postProcess?: PostProcessOptions,
+	url: string,
+	outputDir: string,
+	filename: string,
+	onProgress?: ProgressCallback,
+	postProcess?: PostProcessOptions,
 ): Promise<string> {
-  await mkdir(outputDir, { recursive: true });
-  const filePath  = path.join(outputDir, filename);
-  const hasFfmpeg = ffmpegAvailable();
+	await mkdir(outputDir, { recursive: true });
+	const filePath = path.join(outputDir, filename);
+	const hasFfmpeg = ffmpegAvailable();
 
-  if (isHlsUrl(url)) {
-    if (!hasFfmpeg) {
-      throw new Error(
-        'This video uses HLS format and requires ffmpeg.\n' +
-        '  Install: brew install ffmpeg  (macOS)\n' +
-        '           apt install ffmpeg  (Linux)',
-      );
-    }
-    let hlsTotal = 0;
-    await downloadHls(url, filePath, (p: HlsProgress) => {
-      if (!hlsTotal) hlsTotal = p.total;
-      onProgress?.({ downloaded: p.segment, total: hlsTotal, speed: 0, percentage: p.percentage, phase: 'hls' });
-    });
-  } else {
-    await downloadMp4(url, filePath, onProgress);
-  }
+	if (isHlsUrl(url)) {
+		if (!hasFfmpeg) {
+			throw new Error(
+				"This video uses HLS format and requires ffmpeg.\n" +
+					"  Install: brew install ffmpeg  (macOS)\n" +
+					"           apt install ffmpeg  (Linux)",
+			);
+		}
+		let hlsTotal = 0;
+		await downloadHls(url, filePath, (p: HlsProgress) => {
+			if (!hlsTotal) hlsTotal = p.total;
+			onProgress?.({
+				downloaded: p.segment,
+				total: hlsTotal,
+				speed: 0,
+				percentage: p.percentage,
+				phase: "hls",
+			});
+		});
+	} else {
+		await downloadMp4(url, filePath, onProgress);
+	}
 
-  let finalPath = filePath;
+	let finalPath = filePath;
 
-  if (postProcess?.watermark) {
-    if (!hasFfmpeg) throw new Error('Watermark requires ffmpeg. Install it first.');
-    onProgress?.({ downloaded: 0, total: 1, speed: 0, percentage: 0, phase: 'watermark' });
-    finalPath = await addWatermark(
-      filePath,
-      postProcess.watermark,
-      postProcess.watermarkPos ?? 'bottom-right',
-      postProcess.watermarkSize ?? 150,
-      postProcess.watermarkOpacity ?? 0.7,
-    );
-    onProgress?.({ downloaded: 1, total: 1, speed: 0, percentage: 100, phase: 'watermark' });
-  }
+	if (postProcess?.watermark) {
+		if (!hasFfmpeg)
+			throw new Error("Watermark requires ffmpeg. Install it first.");
+		onProgress?.({
+			downloaded: 0,
+			total: 1,
+			speed: 0,
+			percentage: 0,
+			phase: "watermark",
+		});
+		finalPath = await addWatermark(
+			filePath,
+			postProcess.watermark,
+			postProcess.watermarkPos ?? "bottom-right",
+			postProcess.watermarkSize ?? 150,
+			postProcess.watermarkOpacity ?? 0.7,
+		);
+		onProgress?.({
+			downloaded: 1,
+			total: 1,
+			speed: 0,
+			percentage: 100,
+			phase: "watermark",
+		});
+	}
 
-  if (postProcess?.gif) {
-    if (!hasFfmpeg) throw new Error('GIF conversion requires ffmpeg. Install it first.');
-    onProgress?.({ downloaded: 0, total: 1, speed: 0, percentage: 0, phase: 'gif' });
-    finalPath = await convertToGif(filePath, outputDir, {
-      fps: postProcess.gifFps,
-      width: postProcess.gifWidth,
-    });
-    onProgress?.({ downloaded: 1, total: 1, speed: 0, percentage: 100, phase: 'gif' });
-  }
+	if (postProcess?.gif) {
+		if (!hasFfmpeg)
+			throw new Error("GIF conversion requires ffmpeg. Install it first.");
+		onProgress?.({
+			downloaded: 0,
+			total: 1,
+			speed: 0,
+			percentage: 0,
+			phase: "gif",
+		});
+		finalPath = await convertToGif(filePath, outputDir, {
+			fps: postProcess.gifFps,
+			width: postProcess.gifWidth,
+		});
+		onProgress?.({
+			downloaded: 1,
+			total: 1,
+			speed: 0,
+			percentage: 100,
+			phase: "gif",
+		});
+	}
 
-  if (postProcess?.subtitle) {
-    if (!hasFfmpeg) throw new Error('Subtitle burning requires ffmpeg. Install it first.');
-    const { targetLang, sourceLang = 'auto', libreUrl, whisperUrl, whisperKey, tracks } = postProcess.subtitle;
+	if (postProcess?.subtitle) {
+		if (!hasFfmpeg)
+			throw new Error("Subtitle burning requires ffmpeg. Install it first.");
+		const {
+			targetLang,
+			sourceLang = "auto",
+			libreUrl,
+			whisperUrl,
+			whisperKey,
+			tracks,
+		} = postProcess.subtitle;
 
-    onProgress?.({ downloaded: 0, total: 1, speed: 0, percentage: 0, phase: 'subtitle' });
+		onProgress?.({
+			downloaded: 0,
+			total: 1,
+			speed: 0,
+			percentage: 0,
+			phase: "subtitle",
+		});
 
-    // pick the best matching existing track, or fall through to Whisper transcription
-    const track =
-      tracks.find((t) => t.language === targetLang) ??
-      tracks.find((t) => t.language.startsWith(sourceLang === 'auto' ? 'en' : sourceLang)) ??
-      tracks[0];
+		// pick the best matching existing track, or fall through to Whisper transcription
+		const track =
+			tracks.find((t) => t.language === targetLang) ??
+			tracks.find((t) =>
+				t.language.startsWith(sourceLang === "auto" ? "en" : sourceLang),
+			) ??
+			tracks[0];
 
-    let srtContent: string;
-    let trackLang: string;
+		let srtContent: string;
+		let trackLang: string;
 
-    if (track) {
-      // use the existing caption track from Twitter
-      srtContent = await fetchSubtitleContent(track.url);
-      trackLang  = track.language;
-    } else {
-      // no track — resolve Whisper endpoint: explicit flag → XVD_WHISPER_URL env → OPENAI_API_KEY env
-      const whisperCfg = whisperUrl
-        ? { url: whisperUrl, apiKey: whisperKey }
-        : resolveWhisperConfig();
+		if (track) {
+			// use the existing caption track from Twitter
+			srtContent = await fetchSubtitleContent(track.url);
+			trackLang = track.language;
+		} else {
+			// no track — resolve Whisper endpoint: explicit flag → XVD_WHISPER_URL env → OPENAI_API_KEY env
+			const whisperCfg = whisperUrl
+				? { url: whisperUrl, apiKey: whisperKey }
+				: resolveWhisperConfig();
 
-      if (!whisperCfg) {
-        throw new Error(
-          'No subtitle tracks found for this video.\n' +
-          '  Set OPENAI_API_KEY to transcribe automatically via OpenAI Whisper.',
-        );
-      }
+			if (!whisperCfg) {
+				throw new Error(
+					"No subtitle tracks found for this video.\n" +
+						"  Set OPENAI_API_KEY to transcribe automatically via OpenAI Whisper.",
+				);
+			}
 
-      srtContent = await transcribeToSrt(
-        finalPath,
-        whisperCfg.url,
-        sourceLang === 'auto' ? undefined : sourceLang,
-        whisperCfg.apiKey,
-      );
-      // source language is unknown after Whisper — always translate so LibreTranslate auto-detects
-      trackLang = sourceLang === 'auto' ? 'auto' : sourceLang;
-    }
+			srtContent = await transcribeToSrt(
+				finalPath,
+				whisperCfg.url,
+				sourceLang === "auto" ? undefined : sourceLang,
+				whisperCfg.apiKey,
+			);
+			// source language is unknown after Whisper — always translate so LibreTranslate auto-detects
+			trackLang = sourceLang === "auto" ? "auto" : sourceLang;
+		}
 
-    // translate only when the source language differs from what the user wants
-    if (trackLang !== targetLang) {
-      srtContent = await translateSrt(
-        srtContent,
-        targetLang,
-        trackLang,
-        libreUrl,
-        (done, total) => onProgress?.({
-          downloaded: done,
-          total,
-          speed: 0,
-          percentage: Math.round((done / total) * 100),
-          phase: 'subtitle',
-        }),
-      );
-    }
+		// translate only when the source language differs from what the user wants
+		if (trackLang !== targetLang) {
+			srtContent = await translateSrt(
+				srtContent,
+				targetLang,
+				trackLang,
+				libreUrl,
+				(done, total) =>
+					onProgress?.({
+						downloaded: done,
+						total,
+						speed: 0,
+						percentage: Math.round((done / total) * 100),
+						phase: "subtitle",
+					}),
+			);
+		}
 
-    // write to a temp file, burn, then clean up
-    const srtPath = path.join(os.tmpdir(), `xvd_sub_${Date.now()}.srt`);
-    await writeFile(srtPath, srtContent, 'utf-8');
-    try {
-      await burnSubtitles(finalPath, srtPath);
-    } finally {
-      await unlink(srtPath).catch(() => {});
-    }
+		// write to a temp file, burn, then clean up
+		const srtPath = path.join(os.tmpdir(), `xvd_sub_${Date.now()}.srt`);
+		await writeFile(srtPath, srtContent, "utf-8");
+		try {
+			await burnSubtitles(finalPath, srtPath);
+		} finally {
+			await unlink(srtPath).catch(() => {});
+		}
 
-    onProgress?.({ downloaded: 1, total: 1, speed: 0, percentage: 100, phase: 'subtitle' });
-  }
+		onProgress?.({
+			downloaded: 1,
+			total: 1,
+			speed: 0,
+			percentage: 100,
+			phase: "subtitle",
+		});
+	}
 
-  return finalPath;
+	return finalPath;
 }
 
 export function defaultOutputDir(): string {
-  const home = os.homedir();
-  for (const candidate of [path.join(home, 'Movies'), path.join(home, 'Videos'), path.join(home, 'Downloads'), home]) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return home;
+	const home = os.homedir();
+	for (const candidate of [
+		path.join(home, "Movies"),
+		path.join(home, "Videos"),
+		path.join(home, "Downloads"),
+		home,
+	]) {
+		if (existsSync(candidate)) return candidate;
+	}
+	return home;
 }
 
 export function buildFilename(tweetId: string, quality: string): string {
-  return `xvd_${tweetId}_${quality.replace(/[^a-zA-Z0-9]/g, '')}.mp4`;
+	return `xvd_${tweetId}_${quality.replace(/[^a-zA-Z0-9]/g, "")}.mp4`;
 }
 
-export function buildPhotoFilename(tweetId: string, index: number, photoUrl: string): string {
-  const extMatch = photoUrl.match(/\.(jpe?g|png|webp|gif)(?:\?|$)/i);
-  const ext = extMatch ? extMatch[1] : 'jpg';
-  return `xvd_${tweetId}_${index + 1}.${ext}`;
+export function buildPhotoFilename(
+	tweetId: string,
+	index: number,
+	photoUrl: string,
+): string {
+	const extMatch = photoUrl.match(/\.(jpe?g|png|webp|gif)(?:\?|$)/i);
+	const ext = extMatch ? extMatch[1] : "jpg";
+	return `xvd_${tweetId}_${index + 1}.${ext}`;
 }
 
 export async function downloadPhoto(
-  url: string,
-  outputDir: string,
-  filename: string,
-  onProgress?: ProgressCallback,
+	url: string,
+	outputDir: string,
+	filename: string,
+	onProgress?: ProgressCallback,
 ): Promise<string> {
-  await mkdir(outputDir, { recursive: true });
-  const filePath = path.join(outputDir, filename);
+	await mkdir(outputDir, { recursive: true });
+	const filePath = path.join(outputDir, filename);
 
-  const response = await fetch(url, {
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      Referer: 'https://twitter.com/',
-    },
-  });
+	const response = await fetch(url, {
+		headers: {
+			"User-Agent":
+				"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+				"(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+			Referer: "https://twitter.com/",
+		},
+	});
 
-  if (!response.ok) throw new Error(`Photo download failed: HTTP ${response.status}`);
-  if (!response.body) throw new Error('Empty response body');
+	if (!response.ok)
+		throw new Error(`Photo download failed: HTTP ${response.status}`);
+	if (!response.body) throw new Error("Empty response body");
 
-  const total = parseInt(response.headers.get('content-length') ?? '0', 10);
-  let downloaded = 0;
-  let windowStart = Date.now();
-  let windowBytes = 0;
-  let speed = 0;
+	const total = parseInt(response.headers.get("content-length") ?? "0", 10);
+	let downloaded = 0;
+	let windowStart = Date.now();
+	let windowBytes = 0;
+	let speed = 0;
 
-  const writer = createWriteStream(filePath);
-  const reader = response.body.getReader();
+	const writer = createWriteStream(filePath);
+	const reader = response.body.getReader();
 
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
 
-      await new Promise<void>((resolve, reject) => {
-        writer.write(value, (err) => (err ? reject(err) : resolve()));
-      });
+			await new Promise<void>((resolve, reject) => {
+				writer.write(value, (err) => (err ? reject(err) : resolve()));
+			});
 
-      downloaded  += value.length;
-      windowBytes += value.length;
+			downloaded += value.length;
+			windowBytes += value.length;
 
-      const elapsed = (Date.now() - windowStart) / 1000;
-      if (elapsed >= 0.8) {
-        speed       = windowBytes / elapsed;
-        windowStart = Date.now();
-        windowBytes = 0;
-      }
+			const elapsed = (Date.now() - windowStart) / 1000;
+			if (elapsed >= 0.8) {
+				speed = windowBytes / elapsed;
+				windowStart = Date.now();
+				windowBytes = 0;
+			}
 
-      onProgress?.({
-        downloaded,
-        total,
-        speed,
-        percentage: total > 0 ? Math.min(99, Math.round((downloaded / total) * 100)) : 0,
-        phase: 'mp4',
-      });
-    }
+			onProgress?.({
+				downloaded,
+				total,
+				speed,
+				percentage:
+					total > 0 ? Math.min(99, Math.round((downloaded / total) * 100)) : 0,
+				phase: "mp4",
+			});
+		}
 
-    await new Promise<void>((resolve, reject) => {
-      writer.end((err: unknown) => (err ? reject(err) : resolve()));
-    });
+		await new Promise<void>((resolve, reject) => {
+			writer.end((err: unknown) => (err ? reject(err) : resolve()));
+		});
 
-    onProgress?.({ downloaded, total: downloaded, speed, percentage: 100, phase: 'mp4' });
-  } catch (err) {
-    writer.destroy();
-    if (existsSync(filePath)) unlinkSync(filePath);
-    throw err;
-  }
+		onProgress?.({
+			downloaded,
+			total: downloaded,
+			speed,
+			percentage: 100,
+			phase: "mp4",
+		});
+	} catch (err) {
+		writer.destroy();
+		if (existsSync(filePath)) unlinkSync(filePath);
+		throw err;
+	}
 
-  return filePath;
+	return filePath;
 }

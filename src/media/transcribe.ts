@@ -1,34 +1,49 @@
-import { execFile } from 'child_process';
-import { readFile, unlink } from 'fs/promises';
-import path from 'path';
-import os from 'os';
+import { execFile } from "node:child_process";
+import { readFile, unlink } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 // Extract a 16kHz mono WAV from the video — optimal input format for Whisper
 function extractAudio(videoPath: string): Promise<string> {
-  const wavPath = path.join(os.tmpdir(), `xvd_audio_${Date.now()}.wav`);
-  return new Promise((resolve, reject) => {
-    execFile('ffmpeg', [
-      '-y', '-loglevel', 'error',
-      '-i', videoPath,
-      '-vn',
-      '-acodec', 'pcm_s16le',
-      '-ar', '16000',
-      '-ac', '1',
-      wavPath,
-    ], (err) => (err ? reject(new Error(`Audio extraction failed: ${err.message}`)) : resolve(wavPath)));
-  });
+	const wavPath = path.join(os.tmpdir(), `xvd_audio_${Date.now()}.wav`);
+	return new Promise((resolve, reject) => {
+		execFile(
+			"ffmpeg",
+			[
+				"-y",
+				"-loglevel",
+				"error",
+				"-i",
+				videoPath,
+				"-vn",
+				"-acodec",
+				"pcm_s16le",
+				"-ar",
+				"16000",
+				"-ac",
+				"1",
+				wavPath,
+			],
+			(err) =>
+				err
+					? reject(new Error(`Audio extraction failed: ${err.message}`))
+					: resolve(wavPath),
+		);
+	});
 }
 
 // Build-time injected Whisper credentials
 declare const __XVD_WHISPER_URL__: string;
 declare const __XVD_WHISPER_KEY__: string;
-const BUILTIN_WHISPER_URL: string = (typeof __XVD_WHISPER_URL__ !== 'undefined' ? __XVD_WHISPER_URL__ : '');
-const BUILTIN_WHISPER_KEY: string = (typeof __XVD_WHISPER_KEY__ !== 'undefined' ? __XVD_WHISPER_KEY__ : '');
+const BUILTIN_WHISPER_URL: string =
+	typeof __XVD_WHISPER_URL__ !== "undefined" ? __XVD_WHISPER_URL__ : "";
+const BUILTIN_WHISPER_KEY: string =
+	typeof __XVD_WHISPER_KEY__ !== "undefined" ? __XVD_WHISPER_KEY__ : "";
 
 // Detect the right model name: OpenAI uses "whisper-1", faster-whisper uses full HuggingFace name
 function resolveModel(whisperUrl: string): string {
-  if (whisperUrl.includes('api.openai.com')) return 'whisper-1';
-  return 'Systran/faster-whisper-small';
+	if (whisperUrl.includes("api.openai.com")) return "whisper-1";
+	return "Systran/faster-whisper-small";
 }
 
 /**
@@ -45,48 +60,57 @@ function resolveModel(whisperUrl: string): string {
 const MAX_WHISPER_MB = 10;
 
 export async function transcribeToSrt(
-  videoPath: string,
-  whisperUrl: string,
-  language?: string,
-  apiKey?: string,
+	videoPath: string,
+	whisperUrl: string,
+	language?: string,
+	apiKey?: string,
 ): Promise<string> {
-  const wavPath = await extractAudio(videoPath);
+	const wavPath = await extractAudio(videoPath);
 
-  try {
-    const audioBuffer = await readFile(wavPath);
+	try {
+		const audioBuffer = await readFile(wavPath);
 
-    const sizeMb = audioBuffer.byteLength / (1024 * 1024);
-    if (sizeMb > MAX_WHISPER_MB) {
-      throw new Error(
-        `Audio is ${sizeMb.toFixed(1)} MB — transcription is limited to ${MAX_WHISPER_MB} MB (~5 min). Download without --subtitle for longer videos.`,
-      );
-    }
-    const form = new FormData();
-    form.append('file', new Blob([audioBuffer], { type: 'audio/wav' }), 'audio.wav');
-    form.append('model', resolveModel(whisperUrl));
-    form.append('response_format', 'srt');
-    if (language) form.append('language', language);
+		const sizeMb = audioBuffer.byteLength / (1024 * 1024);
+		if (sizeMb > MAX_WHISPER_MB) {
+			throw new Error(
+				`Audio is ${sizeMb.toFixed(1)} MB — transcription is limited to ${MAX_WHISPER_MB} MB (~5 min). Download without --subtitle for longer videos.`,
+			);
+		}
+		const form = new FormData();
+		form.append(
+			"file",
+			new Blob([audioBuffer], { type: "audio/wav" }),
+			"audio.wav",
+		);
+		form.append("model", resolveModel(whisperUrl));
+		form.append("response_format", "srt");
+		if (language) form.append("language", language);
 
-    const effectiveKey = apiKey || BUILTIN_WHISPER_KEY;
-    const headers: Record<string, string> = {};
-    if (effectiveKey) headers['Authorization'] = `Bearer ${effectiveKey}`;
+		const effectiveKey = apiKey || BUILTIN_WHISPER_KEY;
+		const headers: Record<string, string> = {};
+		if (effectiveKey) headers.Authorization = `Bearer ${effectiveKey}`;
 
-    const res = await fetch(`${whisperUrl.replace(/\/$/, '')}/v1/audio/transcriptions`, {
-      method: 'POST',
-      headers,
-      body: form,
-      signal: AbortSignal.timeout(180_000), // 3 min — long videos take a while
-    });
+		const res = await fetch(
+			`${whisperUrl.replace(/\/$/, "")}/v1/audio/transcriptions`,
+			{
+				method: "POST",
+				headers,
+				body: form,
+				signal: AbortSignal.timeout(180_000), // 3 min — long videos take a while
+			},
+		);
 
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      throw new Error(`Whisper API HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
-    }
+		if (!res.ok) {
+			const detail = await res.text().catch(() => "");
+			throw new Error(
+				`Whisper API HTTP ${res.status}${detail ? `: ${detail}` : ""}`,
+			);
+		}
 
-    return await res.text();
-  } finally {
-    await unlink(wavPath).catch(() => {});
-  }
+		return await res.text();
+	} finally {
+		await unlink(wavPath).catch(() => {});
+	}
 }
 
 /**
@@ -97,17 +121,23 @@ export async function transcribeToSrt(
  *
  * Returns undefined when nothing is configured (caller decides what to do).
  */
-export function resolveWhisperConfig(): { url: string; apiKey?: string } | undefined {
-  // 1. Build-time baked-in URL (from .env at npm run build)
-  if (BUILTIN_WHISPER_URL) return { url: BUILTIN_WHISPER_URL, apiKey: BUILTIN_WHISPER_KEY || undefined };
+export function resolveWhisperConfig():
+	| { url: string; apiKey?: string }
+	| undefined {
+	// 1. Build-time baked-in URL (from .env at npm run build)
+	if (BUILTIN_WHISPER_URL)
+		return {
+			url: BUILTIN_WHISPER_URL,
+			apiKey: BUILTIN_WHISPER_KEY || undefined,
+		};
 
-  // 2. Runtime env variable (user's own setup)
-  const envUrl = process.env['XVD_WHISPER_URL'];
-  if (envUrl) return { url: envUrl };
+	// 2. Runtime env variable (user's own setup)
+	const envUrl = process.env.XVD_WHISPER_URL;
+	if (envUrl) return { url: envUrl };
 
-  // 3. OpenAI API key fallback
-  const openaiKey = process.env['OPENAI_API_KEY'];
-  if (openaiKey) return { url: 'https://api.openai.com', apiKey: openaiKey };
+	// 3. OpenAI API key fallback
+	const openaiKey = process.env.OPENAI_API_KEY;
+	if (openaiKey) return { url: "https://api.openai.com", apiKey: openaiKey };
 
-  return undefined;
+	return undefined;
 }

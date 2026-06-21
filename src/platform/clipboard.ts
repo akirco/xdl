@@ -1,15 +1,15 @@
-import clipboardy from 'clipboardy';
+import clipboardy from "clipboardy";
 
 export function isTwitterUrl(text: string): boolean {
-  return /(?:twitter|x)\.com\/(?:\w+)\/status\/\d+/i.test(text.trim());
+	return /(?:twitter|x)\.com\/(?:\w+)\/status\/\d+/i.test(text.trim());
 }
 
 export async function readClipboard(): Promise<string> {
-  try {
-    return await clipboardy.read();
-  } catch {
-    return '';
-  }
+	try {
+		return await clipboardy.read();
+	} catch {
+		return "";
+	}
 }
 
 /**
@@ -18,23 +18,27 @@ export async function readClipboard(): Promise<string> {
  * Returns a stop function.
  */
 export function startClipboardWatcher(
-  onNewUrl: (url: string) => void,
-  intervalMs = 600,
+	onNewUrl: (url: string) => void,
+	intervalMs = 600,
 ): () => void {
-  let last = '';
+	let last = "";
 
-  const id = setInterval(async () => {
-    const current = (await readClipboard()).trim();
-    if (current && current !== last && isTwitterUrl(current)) {
-      last = current;
-      onNewUrl(current);
-    } else if (current !== last) {
-      last = current;
-    }
-  }, intervalMs);
+	const id = setInterval(async () => {
+		const current = (await readClipboard()).trim();
+		if (current && current !== last && isTwitterUrl(current)) {
+			last = current;
+			onNewUrl(current);
+		} else if (current !== last) {
+			last = current;
+		}
+	}, intervalMs);
 
-  // Seed `last` immediately so we don't fire on whatever's already in the clipboard
-  readClipboard().then((v) => { last = v.trim(); }).catch(() => {});
+	// Seed `last` immediately so we don't fire on whatever's already in the clipboard
+	readClipboard()
+		.then((v) => {
+			last = v.trim();
+		})
+		.catch(() => {});
 
-  return () => clearInterval(id);
+	return () => clearInterval(id);
 }
